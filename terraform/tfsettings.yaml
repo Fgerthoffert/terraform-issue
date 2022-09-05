@@ -1,0 +1,401 @@
+---
+# Environment identifiers:
+# ------------------------
+# These variables are used to identify who created the environment, remember
+# that these environments are aimed at being transient so if an environment
+# is left running, these would be useful to track down what happened
+#
+# env_prefix: A (preferably) unique prefix that would be attached to created resources
+#             This will make it easier to identify the resource when using
+#             the AWS console
+# env_author: (AWS tag) Author who executed terraform
+# env_name: (AWS tag) Name of the actual run
+# env_link: (AWS tag) Link to the source job
+# env_purpose: (AWS tag) What is the purpose of the environment, this tag
+#               can later be used if there are any resources that would need
+#               be deleted in bulk ("delete all resources with the value
+#               performance-tests")
+env_prefix: jahia-perf-test
+env_author: Jahia CI
+env_name: Jahia perf test
+env_link: https://github.com/Jahia/core-perf-test
+env_purpose: jahia-performance-tests
+
+# List of SSH public keys to deploy to the EC2 machines so that the team can SSH into them
+# user is ubuntu
+ssh_pub_keys:
+  - 'ssh-rsa SOMEKEY'
+
+# AWS Setup
+aws_region: eu-west-1
+
+# Route53:
+# --------
+# Route53 is the domain configuration, the main idea here is that communication
+# between most resources is to be performed using a private domain (and private IPs).
+# This private domain is attached to the VPC only and will not conflict with any other
+# domains that might be created on other VPCs.
+# The public domain has a more limited use and is to be primariraly used by the bastion
+# server, who will be contacted by external resources (CircleCI).
+#
+# public_root_domain: Is the domain used on the AWS sandbox. Specifying it separately allows
+# us to declare a new name server and create DNS records in a fully isolated domain.
+# env_public_domain: EC2 instances will be reachable using [hostname].env_public_domain
+# env_private_domain: EC2 instances will be reachable using [hostname].env_private_domain
+route53:
+  public_root_domain: B.REDACTED.com
+  env_public_domain: jperf.B.REDACTED.com
+  env_private_domain: A.B.REDACTED.com
+
+vpc:
+  subnet: 10.0.0.0/16
+
+ec2:
+  subnet: 10.0.3.0/24
+
+# Bastion is the ec2 instance that will be collect all of the data and be available as a jump server
+bastion:
+  hostname: bastion
+  http_logs_username: root
+  http_logs_password: root1234
+
+# An array of docker containers to start with the ec2-docker module
+docker_containers:
+  ldap:
+    name: ldap
+    image: jahia/docker-openldap:1.1.0
+    ec2_instance_type: m6a.large
+    docker_params:
+      - '-p 389:389'
+    docker_command:
+      - ''
+    environment:
+      - 'LDAP_LOG_LEVEL=256'
+      - 'LDAP_ORGANISATION=Jahia Inc.'
+      - 'LDAP_DOMAIN=REDACTED.com'
+      - 'LDAP_BASE_DN=cn=admin,dc=jahia,dc=com'
+      - 'LDAP_ADMIN_PASSWORD=admin'
+      - 'LDAP_CONFIG_PASSWORD=config'
+      - 'LDAP_READONLY_USER=false'
+    volume: ''
+
+  mariadb:
+    name: mariadb
+    image: library/mariadb:10-focal
+    ec2_instance_type: i3.2xlarge
+    docker_params:
+      - '-p 3306:3306'
+    docker_command:
+      - '--max_allowed_packet=1073741824'
+      - '--transaction-isolation=READ-UNCOMMITTED'
+      - '--innodb-lock-wait-timeout=10'
+      - '--max-connections=1250'
+      - '--open-files-limit=10000'
+      - '--key-buffer-size=16777216'
+      - '--innodb-buffer-pool-size=12884901888'
+      - '--innodb-log-file-size=3221225472'
+      - '--innodb-log-buffer-size=786432000'
+    environment:
+      - 'MYSQL_ROOT_PASSWORD=mariadbP@55'
+      - 'MYSQL_DATABASE=jahia'
+      - 'MYSQL_USER=jahia'
+      - 'MYSQL_PASSWORD=jahia'
+    volume: ''
+
+  jahia:
+    name: jahia_8
+    # See variables.tf for default Jahia Docker image
+    image: DOCKER_JAHIA_IMAGE
+    ec2_instance_type: m6a.2xlarge
+    path_to_envfile:
+    sleep: 60
+    docker_params:
+      - '-p 8080:8080'
+      - '-p 8101:8101'
+      - '-p 8000:8000'
+      - '-p 7870:7870'
+      - '-p 7860:7860'
+      - '--network host'
+    docker_command:
+      - ''
+    environment:
+      - 'jahia_cfg_karaf_remoteShellHost=0.0.0.0'
+      - 'SUPER_USER_PASSWORD=root1234'
+      - 'CLUSTER_ENABLED=true'
+      - 'PROCESSING_SERVER=true'
+      - 'JAHIA_LICENSE'
+      - 'NEXUS_USERNAME'
+      - 'NEXUS_PASSWORD'
+      - 'DBMS_TYPE=mariadb'
+      - 'DB_VENDOR=mariadb'
+      - 'DB_HOST=mariadb.A.B.REDACTED.com'
+      - 'DB_NAME=jahia'
+      - 'DB_USER=jahia'
+      - 'DB_PASS=jahia'
+      - 'JAHIA_PROPERTIES=atmosphere.useWebsockets:"true",atmosphere.asyncSupport:"org.atmosphere.container.JSR356AsyncSupport"'
+    volume: ''
+
+  jahia-browsing-a:
+    name: jahia-browsing-a_8
+    # See variables.tf for default Jahia Docker image
+    image: DOCKER_JAHIA_IMAGE
+    ec2_instance_type: m6a.2xlarge
+    path_to_envfile:
+    sleep: 30
+    cron: '2,7,12,17,22,27,32,37,42,47,52,57 * * * *'
+    docker_params:
+      - '-p 8080:8080'
+      - '-p 8101:8101'
+      - '-p 8000:8000'
+      - '-p 7870:7870'
+      - '-p 7860:7860'
+      - '--network host'
+    docker_command:
+      - ''
+    environment:
+      - 'jahia_cfg_karaf_remoteShellHost=0.0.0.0'
+      - 'SUPER_USER_PASSWORD=root1234'
+      - 'CLUSTER_ENABLED=true'
+      - 'PROCESSING_SERVER=false'
+      - 'PROCESSING_HOST=jahia.A.B.REDACTED.com'
+      - 'JAHIA_LICENSE'
+      - 'DBMS_TYPE=mariadb'
+      - 'DB_VENDOR=mariadb'
+      - 'DB_HOST=mariadb.A.B.REDACTED.com'
+      - 'DB_NAME=jahia'
+      - 'DB_USER=jahia'
+      - 'DB_PASS=jahia'
+      - 'JAHIA_PROPERTIES=atmosphere.useWebsockets:"true",atmosphere.asyncSupport:"org.atmosphere.container.JSR356AsyncSupport"'
+    volume: ''
+
+  jahia-browsing-b:
+    name: jahia-browsing-b_8
+    # See variables.tf for default Jahia Docker image
+    image: DOCKER_JAHIA_IMAGE
+    ec2_instance_type: m6a.2xlarge
+    path_to_envfile:
+    sleep: 30
+    cron: '4,9,14,19,24,29,34,39,44,49,54,59 * * * *'
+    docker_params:
+      - '-p 8080:8080'
+      - '-p 8101:8101'
+      - '-p 8000:8000'
+      - '-p 7870:7870'
+      - '-p 7860:7860'
+      - '--network host'
+    docker_command:
+      - ''
+    environment:
+      - 'jahia_cfg_karaf_remoteShellHost=0.0.0.0'
+      - 'SUPER_USER_PASSWORD=root1234'
+      - 'CLUSTER_ENABLED=true'
+      - 'PROCESSING_SERVER=false'
+      - 'PROCESSING_HOST=jahia.A.B.REDACTED.com'
+      - 'JAHIA_LICENSE'
+      - 'DBMS_TYPE=mariadb'
+      - 'DB_VENDOR=mariadb'
+      - 'DB_HOST=mariadb.A.B.REDACTED.com'
+      - 'DB_NAME=jahia'
+      - 'DB_USER=jahia'
+      - 'DB_PASS=jahia'
+      - 'JAHIA_PROPERTIES=atmosphere.useWebsockets:"true",atmosphere.asyncSupport:"org.atmosphere.container.JSR356AsyncSupport"'
+    volume: ''
+
+  jmeter-injector1:
+    name: jmeter-injector1
+    # See variables.tf for default Jahia Docker image
+    image: DOCKER_TESTS_IMAGE
+    ec2_instance_type: m6a.2xlarge
+    docker_params:
+      - '--network host'
+    docker_command:
+      - ''
+    environment:
+      - 'NEXUS_USERNAME'
+      - 'NEXUS_PASSWORD'
+      - 'JAHIA_URL=http://jahia.A.B.REDACTED.com:8080'
+      - 'JAHIA_BROWSING_A_URL=http://jahia-browsing-a.A.B.REDACTED.com:8080'
+      - 'JAHIA_BROWSING_B_URL=http://jahia-browsing-b.A.B.REDACTED.com:8080'
+      - 'SUPER_USER_PASSWORD=root1234'
+      - 'USERS_ID_START=0'
+      - 'USERS_ID_COUNT=999'
+      - 'SERVER_TYPE=injector'
+      - 'jahia_test_jmeter_totalBrowsingServers=2'
+      - 'jahia_test_jmeter_browsingServerIP1=jahia-browsing-a.A.B.REDACTED.com'
+      - 'jahia_test_jmeter_browsingServerIP2=jahia-browsing-b.A.B.REDACTED.com'
+      - 'jahia_test_jmeter_totalAuthoringServers=1'
+      - 'jahia_test_jmeter_authoringServerIP1=jahia.A.B.REDACTED.com'
+      - 'jahia_test_jmeter_NbPagesToBrowsePerUser=20'
+      - 'jahia_test_jmeter_nbUsersGuest=625'
+      - 'jahia_test_jmeter_guestBrowsingLoops=-1'
+      - 'jahia_test_jmeter_nbUsersAuth=625'
+      - 'jahia_test_jmeter_authBrowsingLoops=-1'
+      - 'jahia_test_jmeter_nbUsersEditCreate=10'
+      - 'jahia_test_jmeter_authCreatePageLoops=-1'
+      - 'jahia_test_jmeter_nbUsersEditUpdate=15'
+      - 'jahia_test_jmeter_authUpdateContentLoops=-1'
+      - 'jahia_test_jmeter_nbPortalBrowsing=0'
+      - 'jahia_test_jmeter_nbPortalCustomizing=0'
+      - 'jahia_test_jmeter_nbUsersLsm=0'
+      - 'remote_hosts=jmeter-coordinator.A.B.REDACTED.com'
+    volume: '--mount type=bind,source=/home/ubuntu/data/artifacts/results,target=/home/jahians/results/'
+
+  jmeter-injector2:
+    name: jmeter-injector2
+    # See variables.tf for default Jahia Docker image
+    image: DOCKER_TESTS_IMAGE
+    ec2_instance_type: m6a.2xlarge
+    docker_params:
+      - '--network host'
+    docker_command:
+      - ''
+    environment:
+      - 'NEXUS_USERNAME'
+      - 'NEXUS_PASSWORD'
+      - 'JAHIA_URL=http://jahia.A.B.REDACTED.com:8080'
+      - 'JAHIA_BROWSING_A_URL=http://jahia-browsing-a.A.B.REDACTED.com:8080'
+      - 'JAHIA_BROWSING_B_URL=http://jahia-browsing-b.A.B.REDACTED.com:8080'
+      - 'SUPER_USER_PASSWORD=root1234'
+      - 'USERS_ID_START=1000'
+      - 'USERS_ID_COUNT=1999'
+      - 'SERVER_TYPE=injector'
+      - 'jahia_test_jmeter_totalBrowsingServers=2'
+      - 'jahia_test_jmeter_browsingServerIP1=jahia-browsing-a.A.B.REDACTED.com'
+      - 'jahia_test_jmeter_browsingServerIP2=jahia-browsing-b.A.B.REDACTED.com'
+      - 'jahia_test_jmeter_totalAuthoringServers=1'
+      - 'jahia_test_jmeter_authoringServerIP1=jahia.A.B.REDACTED.com'
+      - 'jahia_test_jmeter_NbPagesToBrowsePerUser=20'
+      - 'jahia_test_jmeter_nbUsersGuest=625'
+      - 'jahia_test_jmeter_guestBrowsingLoops=-1'
+      - 'jahia_test_jmeter_nbUsersAuth=625'
+      - 'jahia_test_jmeter_authBrowsingLoops=-1'
+      - 'jahia_test_jmeter_nbUsersEditCreate=10'
+      - 'jahia_test_jmeter_authCreatePageLoops=-1'
+      - 'jahia_test_jmeter_nbUsersEditUpdate=15'
+      - 'jahia_test_jmeter_authUpdateContentLoops=-1'
+      - 'jahia_test_jmeter_nbPortalBrowsing=0'
+      - 'jahia_test_jmeter_nbPortalCustomizing=0'
+      - 'jahia_test_jmeter_nbUsersLsm=0'
+      - 'remote_hosts=jmeter-coordinator.A.B.REDACTED.com'
+    volume: '--mount type=bind,source=/home/ubuntu/data/artifacts/results,target=/home/jahians/results/'
+
+  jmeter-injector3:
+    name: jmeter-injector3
+    # See variables.tf for default Jahia Docker image
+    image: DOCKER_TESTS_IMAGE
+    ec2_instance_type: m6a.2xlarge
+    docker_params:
+      - '--network host'
+    docker_command:
+      - ''
+    environment:
+      - 'NEXUS_USERNAME'
+      - 'NEXUS_PASSWORD'
+      - 'JAHIA_URL=http://jahia.A.B.REDACTED.com:8080'
+      - 'JAHIA_BROWSING_A_URL=http://jahia-browsing-a.A.B.REDACTED.com:8080'
+      - 'JAHIA_BROWSING_B_URL=http://jahia-browsing-b.A.B.REDACTED.com:8080'
+      - 'SUPER_USER_PASSWORD=root1234'
+      - 'USERS_ID_START=2000'
+      - 'USERS_ID_COUNT=2999'
+      - 'SERVER_TYPE=injector'
+      - 'jahia_test_jmeter_totalBrowsingServers=2'
+      - 'jahia_test_jmeter_browsingServerIP1=jahia-browsing-a.A.B.REDACTED.com'
+      - 'jahia_test_jmeter_browsingServerIP2=jahia-browsing-b.A.B.REDACTED.com'
+      - 'jahia_test_jmeter_totalAuthoringServers=1'
+      - 'jahia_test_jmeter_authoringServerIP1=jahia.A.B.REDACTED.com'
+      - 'jahia_test_jmeter_NbPagesToBrowsePerUser=20'
+      - 'jahia_test_jmeter_nbUsersGuest=625'
+      - 'jahia_test_jmeter_guestBrowsingLoops=-1'
+      - 'jahia_test_jmeter_nbUsersAuth=625'
+      - 'jahia_test_jmeter_authBrowsingLoops=-1'
+      - 'jahia_test_jmeter_nbUsersEditCreate=10'
+      - 'jahia_test_jmeter_authCreatePageLoops=-1'
+      - 'jahia_test_jmeter_nbUsersEditUpdate=15'
+      - 'jahia_test_jmeter_authUpdateContentLoops=-1'
+      - 'jahia_test_jmeter_nbPortalBrowsing=0'
+      - 'jahia_test_jmeter_nbPortalCustomizing=0'
+      - 'jahia_test_jmeter_nbUsersLsm=0'
+      - 'remote_hosts=jmeter-coordinator.A.B.REDACTED.com'
+    volume: '--mount type=bind,source=/home/ubuntu/data/artifacts/results,target=/home/jahians/results/'
+
+  jmeter-injector4:
+    name: jmeter-injector4
+    # See variables.tf for default Jahia Docker image
+    image: DOCKER_TESTS_IMAGE
+    ec2_instance_type: m6a.2xlarge
+    docker_params:
+      - '--network host'
+    docker_command:
+      - ''
+    environment:
+      - 'NEXUS_USERNAME'
+      - 'NEXUS_PASSWORD'
+      - 'JAHIA_URL=http://jahia.A.B.REDACTED.com:8080'
+      - 'JAHIA_BROWSING_A_URL=http://jahia-browsing-a.A.B.REDACTED.com:8080'
+      - 'JAHIA_BROWSING_B_URL=http://jahia-browsing-b.A.B.REDACTED.com:8080'
+      - 'SUPER_USER_PASSWORD=root1234'
+      - 'USERS_ID_START=3000'
+      - 'USERS_ID_COUNT=3999'
+      - 'SERVER_TYPE=injector'
+      - 'jahia_test_jmeter_totalBrowsingServers=2'
+      - 'jahia_test_jmeter_browsingServerIP1=jahia-browsing-a.A.B.REDACTED.com'
+      - 'jahia_test_jmeter_browsingServerIP2=jahia-browsing-b.A.B.REDACTED.com'
+      - 'jahia_test_jmeter_totalAuthoringServers=1'
+      - 'jahia_test_jmeter_authoringServerIP1=jahia.A.B.REDACTED.com'
+      - 'jahia_test_jmeter_NbPagesToBrowsePerUser=20'
+      - 'jahia_test_jmeter_nbUsersGuest=625'
+      - 'jahia_test_jmeter_guestBrowsingLoops=-1'
+      - 'jahia_test_jmeter_nbUsersAuth=625'
+      - 'jahia_test_jmeter_authBrowsingLoops=-1'
+      - 'jahia_test_jmeter_nbUsersEditCreate=10'
+      - 'jahia_test_jmeter_authCreatePageLoops=-1'
+      - 'jahia_test_jmeter_nbUsersEditUpdate=15'
+      - 'jahia_test_jmeter_authUpdateContentLoops=-1'
+      - 'jahia_test_jmeter_nbPortalBrowsing=0'
+      - 'jahia_test_jmeter_nbPortalCustomizing=0'
+      - 'jahia_test_jmeter_nbUsersLsm=0'
+      - 'remote_hosts=jmeter-coordinator.A.B.REDACTED.com'
+    volume: '--mount type=bind,source=/home/ubuntu/data/artifacts/results,target=/home/jahians/results/'
+
+  jmeter-coordinator:
+    name: jmeter-coordinator
+    # See variables.tf for default Jahia Docker image
+    image: DOCKER_TESTS_IMAGE
+    ec2_instance_type: m6a.2xlarge
+    docker_params:
+      - '--network host'
+    docker_command:
+      - ''
+    environment:
+      - 'NEXUS_USERNAME'
+      - 'NEXUS_PASSWORD'
+      - 'PERF_TESTS_START_INFRA_ONLY'
+      - 'JAHIA_URL=http://jahia.A.B.REDACTED.com:8080'
+      - 'JAHIA_BROWSING_A_URL=http://jahia-browsing-a.A.B.REDACTED.com:8080'
+      - 'JAHIA_BROWSING_B_URL=http://jahia-browsing-b.A.B.REDACTED.com:8080'
+      - 'SUPER_USER_PASSWORD=root1234'
+      - 'USERS_ID_START=0'
+      - 'USERS_ID_COUNT=999'
+      - 'SERVER_TYPE=coordinator'
+      - 'TEST_DURATION=8100'
+      - 'jahia_test_jmeter_totalBrowsingServers=2'
+      - 'jahia_test_jmeter_browsingServerIP1=jahia-browsing-a.A.B.REDACTED.com'
+      - 'jahia_test_jmeter_browsingServerIP2=jahia-browsing-b.A.B.REDACTED.com'
+      - 'jahia_test_jmeter_totalAuthoringServers=1'
+      - 'jahia_test_jmeter_authoringServerIP1=jahia.A.B.REDACTED.com'
+      - 'jahia_test_jmeter_NbPagesToBrowsePerUser=20'
+      - 'jahia_test_jmeter_nbUsersGuest=2500'
+      - 'jahia_test_jmeter_guestBrowsingLoops=-1'
+      - 'jahia_test_jmeter_nbUsersAuth=2500'
+      - 'jahia_test_jmeter_authBrowsingLoops=-1'
+      - 'jahia_test_jmeter_nbUsersEditCreate=40'
+      - 'jahia_test_jmeter_authCreatePageLoops=-1'
+      - 'jahia_test_jmeter_nbUsersEditUpdate=60'
+      - 'jahia_test_jmeter_authUpdateContentLoops=-1'
+      - 'jahia_test_jmeter_nbPortalBrowsing=0'
+      - 'jahia_test_jmeter_nbPortalCustomizing=0'
+      - 'jahia_test_jmeter_nbUsersLsm=0'
+      - 'remote_hosts=jmeter-injector1.A.B.REDACTED.com,jmeter-injector2.A.B.REDACTED.com,jmeter-injector3.A.B.REDACTED.com,jmeter-injector4.A.B.REDACTED.com'
+      - 'jahia_test_jmeter_GWT_serialization_policy_filename=FC6A80CBB96FF7DF417794F28F86D953'
+      - 'jahia_test_jmeter_GWT_jahiaContentManagementService=edit/|FC6A80CBB96FF7DF417794F28F86D953|org_jahia_ajax_gwt_client_service_content_JahiaContentManagementService'
+    volume: '--mount type=bind,source=/home/ubuntu/data/artifacts/results,target=/home/jahians/results/'
